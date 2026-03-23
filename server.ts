@@ -14,7 +14,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Load Firebase config
-const firebaseConfig = JSON.parse(fs.readFileSync(path.join(__dirname, 'firebase-applet-config.json'), 'utf8'));
+let firebaseConfig;
+if (process.env.FIREBASE_CONFIG) {
+  firebaseConfig = JSON.parse(process.env.FIREBASE_CONFIG);
+} else {
+  firebaseConfig = JSON.parse(fs.readFileSync(path.join(__dirname, 'firebase-applet-config.json'), 'utf8'));
+}
 
 // Initialize Firebase Admin SDK
 // This uses the default service account of the Cloud Run container
@@ -175,65 +180,71 @@ async function startServer() {
     }
   });
 
-  // Background task for reminders (runs every hour)
-  const startReminderTask = () => {
-    setInterval(async () => {
-      console.log('[REMINDERS] Checking for upcoming bookings...');
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      const tomorrowStr = tomorrow.toISOString().split('T')[0];
+  app.post('/api/reminders/run', async (req, res) => {
+    console.log('[REMINDERS] Manual trigger received...');
+    await runReminders();
+    res.json({ success: true });
+  });
 
-      try {
-        const bookingsSnap = await db.collection('bookings')
-          .where('status', '==', 'approved')
-          .where('date', '>=', `${tomorrowStr}T00:00:00`)
-          .where('date', '<=', `${tomorrowStr}T23:59:59`)
-          .where('reminderSent', '==', false)
-          .get();
+  // Background task for reminders (runs every hour in persistent environments)
+  const runReminders = async () => {
+    console.log('[REMINDERS] Checking for upcoming bookings...');
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowStr = tomorrow.toISOString().split('T')[0];
 
-        for (const doc of bookingsSnap.docs) {
-          const booking = doc.data();
-          
-          let sendEmail = true;
-          let sendPush = false;
+    try {
+      const bookingsSnap = await db.collection('bookings')
+        .where('status', '==', 'approved')
+        .where('date', '>=', `${tomorrowStr}T00:00:00`)
+        .where('date', '<=', `${tomorrowStr}T23:59:59`)
+        .where('reminderSent', '==', false)
+        .get();
 
-          if (booking.userId) {
-            const prefDoc = await db.collection('users').doc(booking.userId).collection('preferences').doc('settings').get();
-            if (prefDoc.exists) {
-              const prefs = prefDoc.data()!;
-              sendEmail = prefs.emailReminders !== false;
-              sendPush = prefs.pushReminders === true;
-            }
+      for (const doc of bookingsSnap.docs) {
+        const booking = doc.data();
+        
+        let sendEmail = true;
+        let sendPush = false;
+
+        if (booking.userId) {
+          const prefDoc = await db.collection('users').doc(booking.userId).collection('preferences').doc('settings').get();
+          if (prefDoc.exists) {
+            const prefs = prefDoc.data()!;
+            sendEmail = prefs.emailReminders !== false;
+            sendPush = prefs.pushReminders === true;
           }
-
-          if (sendEmail) {
-            await transporter.sendMail({
-              from: `"Massage Klinik" <${process.env.GMAIL_USER}>`,
-              to: booking.customerEmail,
-              subject: 'Påmindelse: Din tid i morgen',
-              html: `
-                <h1>Påmindelse om din tid</h1>
-                <p>Hej ${booking.customerName},</p>
-                <p>Dette er en venlig påmindelse om din tid til ${booking.serviceName} i morgen d. ${booking.date} kl. ${booking.time}.</p>
-                <p>Vi glæder os til at se dig!</p>
-                <p>Venlig hilsen,<br/>Massage Klinikken</p>
-              `,
-            });
-          }
-
-          if (sendPush && booking.userId) {
-            console.log(`[PUSH] Sending reminder to user ${booking.userId}: Husk din tid i morgen kl. ${booking.time}!`);
-          }
-
-          await doc.ref.update({ reminderSent: true });
         }
-      } catch (error) {
-        console.error('Error in reminder task:', error);
+
+        if (sendEmail) {
+          await transporter.sendMail({
+            from: `"Massage Klinik" <${process.env.GMAIL_USER}>`,
+            to: booking.customerEmail,
+            subject: 'Påmindelse: Din tid i morgen',
+            html: `
+              <h1>Påmindelse om din tid</h1>
+              <p>Hej ${booking.customerName},</p>
+              <p>Dette er en venlig påmindelse om din tid til ${booking.serviceName} i morgen d. ${booking.date} kl. ${booking.time}.</p>
+              <p>Vi glæder os til at se dig!</p>
+              <p>Venlig hilsen,<br/>Massage Klinikken</p>
+            `,
+          });
+        }
+
+        if (sendPush && booking.userId) {
+          console.log(`[PUSH] Sending reminder to user ${booking.userId}: Husk din tid i morgen kl. ${booking.time}!`);
+        }
+
+        await doc.ref.update({ reminderSent: true });
       }
-    }, 1000 * 60 * 60); // Every hour
+    } catch (error) {
+      console.error('Error in reminder task:', error);
+    }
   };
 
-  startReminderTask();
+  if (process.env.NODE_ENV !== 'production') {
+    setInterval(runReminders, 1000 * 60 * 60); // Every hour
+  }
 
   app.post('/api/notify-admin-cancellation', async (req, res) => {
     const { bookingId } = req.body;
@@ -279,10 +290,12 @@ async function startServer() {
     });
   }
 
-  const PORT = 3000;
+  const PORT = process.env.PORT || 3000;
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
+
+  return app;
 }
 
-startServer();
+export default startServer();
