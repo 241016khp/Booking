@@ -1,0 +1,66 @@
+{
+  "entities": {
+    "Booking": {
+      "title": "Booking",
+      "description": "A massage appointment booking",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "serviceId": { "type": "string" },
+        "serviceName": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "time": { "type": "string" },
+        "price": { "type": "number" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "customerEmail": { "type": "string" },
+        "customerNote": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected", "cancelled"] },
+        "paymentMethod": { "type": "string", "enum": ["pay_in_store"] },
+        "reminderSent": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["serviceId", "serviceName", "date", "time", "price", "customerName", "customerPhone", "customerEmail", "status", "createdAt"]
+    },
+    "User": {
+      "title": "User",
+      "description": "A registered customer",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "createdAt"]
+    },
+    "NotificationPreferences": {
+      "title": "NotificationPreferences",
+      "description": "User's notification settings",
+      "type": "object",
+      "properties": {
+        "emailConfirmations": { "type": "boolean" },
+        "emailReminders": { "type": "boolean" },
+        "pushConfirmations": { "type": "boolean" },
+        "pushReminders": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["emailConfirmations", "emailReminders", "pushConfirmations", "pushReminders", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/bookings/{bookingId}": {
+      "schema": "Booking",
+      "description": "Collection of massage bookings"
+    },
+    "/users/{uid}": {
+      "schema": "User",
+      "description": "User profile data"
+    },
+    "/users/{uid}/preferences/settings": {
+      "schema": "NotificationPreferences",
+      "description": "User notification preferences"
+    }
+  }
+}

@@ -1,0 +1,104 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    // Collection: bookings
+    // Document ID: auto-generated
+    // Fields:
+    //   - userId: string (optional, UID of the user)
+    //   - serviceId: string (required)
+    //   - serviceName: string (required)
+    //   - date: string (required, ISO 8601)
+    //   - time: string (required)
+    //   - price: number (required)
+    //   - customerName: string (required, 1-100 chars)
+    //   - customerPhone: string (required, 8-15 chars)
+    //   - customerEmail: string (required, email format)
+    //   - customerNote: string (optional, 0-500 chars)
+    //   - status: string (required, enum: pending, approved, rejected, cancelled)
+    //   - paymentMethod: string (required, enum: pay_in_store)
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: users
+    // Document ID: uid
+    // Fields:
+    //   - uid: string (required)
+    //   - name: string (optional)
+    //   - email: string (required)
+    //   - phone: string (optional)
+    //   - createdAt: timestamp (required)
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidBooking(data) {
+      return data.keys().hasAll(['serviceId', 'serviceName', 'date', 'time', 'price', 'customerName', 'customerPhone', 'customerEmail', 'status', 'createdAt', 'reminderSent', 'paymentMethod', 'customerNote']) &&
+             data.serviceId is string &&
+             data.serviceName is string &&
+             data.date is string &&
+             data.time is string &&
+             data.price is number &&
+             data.customerName is string && data.customerName.size() >= 1 && data.customerName.size() <= 100 &&
+             data.customerPhone is string && data.customerPhone.size() >= 8 && data.customerPhone.size() <= 15 &&
+             data.customerEmail is string && isValidEmail(data.customerEmail) &&
+             data.customerNote is string && data.customerNote.size() <= 500 &&
+             data.status in ['pending', 'approved', 'rejected', 'cancelled'] &&
+             data.paymentMethod in ['pay_in_store'] &&
+             data.reminderSent is bool &&
+             data.createdAt is timestamp &&
+             (!('userId' in data) || data.userId is string);
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+             (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+              (request.auth.token.email == "kristofferhjorth@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId) && request.resource.data.keys().hasAll(['uid', 'email', 'createdAt']);
+      allow update: if isOwner(userId) && !('role' in request.resource.data);
+
+      match /preferences/settings {
+        allow read, write: if isOwner(userId);
+      }
+    }
+
+    match /bookings/{bookingId} {
+      // Allow anyone to create a booking (public booking form)
+      // If logged in, ensure userId matches
+      allow create: if isValidBooking(request.resource.data) && 
+                      (!('userId' in request.resource.data) || isOwner(request.resource.data.userId));
+      
+      // Allow reading:
+      // 1. Admins
+      // 2. Owners
+      // 3. Public GET (needed for backend notifications and success page)
+      // 4. Public LIST (needed for availability check - limited to pending/approved)
+      allow read: if isAdmin() || 
+                     (isAuthenticated() && resource.data.userId == request.auth.uid) ||
+                     (resource.data.status in ['pending', 'approved']);
+
+      // Allow users to cancel their own bookings
+      allow update: if isAdmin() || 
+                      (isAuthenticated() && 
+                       resource.data.userId == request.auth.uid && 
+                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']) &&
+                       request.resource.data.status == 'cancelled');
+    }
+  }
+}
